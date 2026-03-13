@@ -1,65 +1,122 @@
 import pandas as pd
 
-def detect_fvg(df):
+def detect_fvg(df, min_size_pct=0.0015):
     """
-    Detects Bullish and Bearish Fair Value Gaps.
-    - Bullish: Gap between Candle 1 High and Candle 3 Low
-    - Bearish: Gap between Candle 1 Low and Candle 3 High
+    Detects Institutional-Sized Fair Value Gaps (FVGs) and checks for mitigation.
+    min_size_pct = 0.0015 means the gap must be at least 0.15% of the price.
     """
-    # Create empty columns for our results
     df['fvg_type'] = None
     df['fvg_top'] = None
     df['fvg_bottom'] = None
+    df['mitigated'] = False
+    df['mitigated_timestamp'] = pd.NaT
 
-    # We loop through the data starting at index 2 (the 3rd candle)
+    # 1. Find the Gaps (WITH THE NEW SIZE FILTER)
     for i in range(2, len(df)):
-        
-        # 1. BULLISH FVG (Buying Imbalance)
-        # Condition: High of 2 candles ago is LOWER than Low of current candle
+        # Bullish FVG
         if df['high'].iloc[i-2] < df['low'].iloc[i]:
-            df.at[df.index[i-1], 'fvg_type'] = 'Bullish'
-            df.at[df.index[i-1], 'fvg_top'] = df['low'].iloc[i]
-            df.at[df.index[i-1], 'fvg_bottom'] = df['high'].iloc[i-2]
-
-        # 2. BEARISH FVG (Selling Imbalance)
-        # Condition: Low of 2 candles ago is HIGHER than High of current candle
+            gap_bottom = df['high'].iloc[i-2]
+            gap_top = df['low'].iloc[i]
+            
+            # 🔥 THE MATH: How big is this gap relative to the price?
+            gap_size = (gap_top - gap_bottom) / gap_bottom
+            
+            # 🛡️ THE FILTER: Only flag it if it's a whale-sized gap
+            if gap_size >= min_size_pct:
+                df.at[df.index[i], 'fvg_type'] = 'Bullish'
+                df.at[df.index[i], 'fvg_bottom'] = gap_bottom
+                df.at[df.index[i], 'fvg_top'] = gap_top
+            
+        # Bearish FVG
         elif df['low'].iloc[i-2] > df['high'].iloc[i]:
-            df.at[df.index[i-1], 'fvg_type'] = 'Bearish'
-            df.at[df.index[i-1], 'fvg_top'] = df['low'].iloc[i-2]
-            df.at[df.index[i-1], 'fvg_bottom'] = df['high'].iloc[i]
+            gap_top = df['low'].iloc[i-2]
+            gap_bottom = df['high'].iloc[i]
+            
+            # 🔥 THE MATH
+            gap_size = (gap_top - gap_bottom) / gap_bottom
+            
+            # 🛡️ THE FILTER
+            if gap_size >= min_size_pct:
+                df.at[df.index[i], 'fvg_type'] = 'Bearish'
+                df.at[df.index[i], 'fvg_top'] = gap_top
+                df.at[df.index[i], 'fvg_bottom'] = gap_bottom
+
+    # 2. The Time Machine (Mitigation Check - Unchanged)
+    for i in range(2, len(df)):
+        if df['fvg_type'].iloc[i] == 'Bullish':
+            for j in range(i + 1, len(df)):
+                if df['low'].iloc[j] <= df['fvg_top'].iloc[i]:
+                    df.at[df.index[i], 'mitigated'] = True
+                    df.at[df.index[i], 'mitigated_timestamp'] = df['timestamp'].iloc[j]
+                    break
+
+        elif df['fvg_type'].iloc[i] == 'Bearish':
+            for j in range(i + 1, len(df)):
+                if df['high'].iloc[j] >= df['fvg_bottom'].iloc[i]:
+                    df.at[df.index[i], 'mitigated'] = True
+                    df.at[df.index[i], 'mitigated_timestamp'] = df['timestamp'].iloc[j]
+                    break
 
     return df
 
 def detect_mss(df, window=5):
     """
-    Detects Market Structure Shifts (MSS).
-    Bullish MSS: Current Close > Highest High of previous 'window' candles.
-    Bearish MSS: Current Close < Lowest Low of previous 'window' candles.
+    Detects TRUE Market Structure Shifts (MSS).
+    Only flags a shift when the trend actually reverses, ignoring continuous breakouts.
     """
     df['mss_type'] = None
-
+    current_trend = None  # The memory of the bot
+    
     for i in range(window, len(df)):
-        # Calculate the previous peak/trough (excluding current candle)
         prev_high = df['high'].iloc[i-window:i].max()
         prev_low = df['low'].iloc[i-window:i].min()
 
-        # Check for Bullish Shift
+        # 1. Check for Bullish Break
         if df['close'].iloc[i] > prev_high:
-            df.at[df.index[i], 'mss_type'] = 'Bullish MSS'
-            
-        # Check for Bearish Shift
+            # ONLY flag it if the trend wasn't already Bullish
+            if current_trend != 'Bullish':
+                df.at[df.index[i], 'mss_type'] = 'Bullish MSS'
+                current_trend = 'Bullish'  # Update the memory
+                
+        # 2. Check for Bearish Break
         elif df['close'].iloc[i] < prev_low:
-            df.at[df.index[i], 'mss_type'] = 'Bearish MSS'
+            # ONLY flag it if the trend wasn't already Bearish
+            if current_trend != 'Bearish':
+                df.at[df.index[i], 'mss_type'] = 'Bearish MSS'
+                current_trend = 'Bearish'  # Update the memory
 
     return df
 
-def detect_liquidity(df):
+def detect_liquidity(df, window=5):
     """
-    Identifies major liquidity levels (Swing Highs/Lows).
-    For now, we'll mark the highest and lowest price in the current view.
+    Identifies Swing Highs and Swing Lows as Liquidity Pools.
+    A Swing High is the highest point within a 'window' of candles.
     """
-    levels = {
-        'high_liq': df['high'].max(),
-        'low_liq': df['low'].min()
+    swing_highs = []
+    swing_lows = []
+
+    # Loop through the data, leaving room on the left and right for the 'window'
+    for i in range(window, len(df) - window):
+        
+        # 1. Look at a small slice of candles around our current candle
+        local_window = df.iloc[i-window : i+window+1]
+        
+        # 2. Check for Buy-Side Liquidity (Swing High)
+        if df['high'].iloc[i] == local_window['high'].max():
+            swing_highs.append({
+                'timestamp': df['timestamp'].iloc[i],
+                'price': df['high'].iloc[i]
+            })
+            
+        # 3. Check for Sell-Side Liquidity (Swing Low)
+        elif df['low'].iloc[i] == local_window['low'].min():
+            swing_lows.append({
+                'timestamp': df['timestamp'].iloc[i],
+                'price': df['low'].iloc[i]
+            })
+
+    # Return the 3 most recent swing highs and lows so the chart doesn't get cluttered
+    return {
+        'highs': swing_highs[-3:], 
+        'lows': swing_lows[-3:]
     }
-    return levels
