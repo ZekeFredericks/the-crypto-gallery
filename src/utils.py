@@ -32,8 +32,8 @@ def fetch_data(symbol, timeframe='1h', limit=100):
         })
 
         # Pass the disguised session to yfinance
-        ticker = yf.Ticker(symbol, session=session)
-        df = ticker.history(interval=yf_interval, period=period)
+        ticker = yf.Ticker(symbol)
+        df = ticker.history(interval=yf_interval, period="max")
         
         if df.empty:
             raise ValueError(f"Yahoo Finance returned no data for {symbol}")

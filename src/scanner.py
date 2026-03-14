@@ -2,6 +2,10 @@ import time
 import pandas as pd
 from src.utils import fetch_data
 from src.indicators import detect_fvg, detect_mss
+from src.notifier import send_discord_alert  # 👈 Add this
+
+# 🧠 The Bot's Memory: Remembers the last time it alerted an asset
+last_alerted_time = {}
 
 # ==========================================
 # THE SETTINGS (Globals)
@@ -46,8 +50,20 @@ def run_matrix_scan(symbols, timeframe='4h'):
             elif recent_fvg == 'Bearish' and recent_mss == 'Bearish MSS':
                 signal_text = "🔥 A+ Bearish"
             elif recent_fvg is not None:
-                # If there's an FVG but no MSS, it's just a regular setup
                 signal_text = f"{recent_fvg} FVG (No MSS)"
+
+            # ==========================================
+            # ⚡ DISCORD ALERT TRIGGER
+            # ==========================================
+            # If it's an A+ signal, get the timestamp of the current candle
+            if signal_text.startswith("🔥 A+"):
+                current_candle_time = latest_candles.iloc[-1].name # Get the timestamp
+                
+                # Check if we ALREADY alerted for this exact candle
+                if last_alerted_time.get(symbol) != current_candle_time:
+                    # If not, send the alert and update the memory!
+                    send_discord_alert(symbol, signal_text, round(df['close'].iloc[-1], 2), timeframe)
+                    last_alerted_time[symbol] = current_candle_time
 
             # 4. Append the final smart signal to the table
             results.append({
