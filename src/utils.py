@@ -1,54 +1,59 @@
-import ccxt
-import yfinance as yf
+import requests
 import pandas as pd
-import requests  # 👈 New tool to spoof the browser
+import time
 
-def fetch_data(symbol, timeframe='1h', limit=100):
-    """
-    Smart data fetcher. 
-    Routes Crypto to Binance (CCXT) and Legacy/Forex to Yahoo Finance.
-    """
-    if "/" in symbol:
-        # 🟢 CRYPTO PIPELINE (Binance)
-        exchange = ccxt.binance()
-        bars = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
-        df = pd.DataFrame(bars, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-        return df
+def fetch_data(symbol="BTCUSDT", timeframe="1h", limit=5000):
+    """Fetches deep historical data directly from the Binance REST API."""
+    print(f"📡 Downloading {limit} candles from Binance for {symbol}...")
+    
+    url = "https://api.binance.com/api/v3/klines"
+    all_candles = []
+    end_time = None
+    
+    # Binance only allows 1000 candles per request, so we loop to get deep history
+    while len(all_candles) < limit:
+        # Request up to 1000 candles at a time
+        batch_size = min(1000, limit - len(all_candles))
+        params = {
+            "symbol": symbol.replace("/", "").replace("-", ""), # Formats to BTCUSDT
+            "interval": timeframe,
+            "limit": batch_size
+        }
         
-    else:
-        # 🔵 LEGACY & FOREX PIPELINE (Yahoo Finance)
-        yf_interval = timeframe
-        if timeframe == '4h':
-            yf_interval = '1h' 
+        # If we already have some candles, ask for the ones that came BEFORE them
+        if end_time:
+            params["endTime"] = end_time
             
-        period = '60d' if yf_interval in ['15m', '1h'] else '1y'
-
-        # 🕵️‍♂️ THE TRENCH COAT (User-Agent Spoofing)
-        # We tell Yahoo Finance that we are a normal Google Chrome browser.
-        session = requests.Session()
-        session.headers.update({
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-        })
-
-        # Pass the disguised session to yfinance
-        ticker = yf.Ticker(symbol)
-        df = ticker.history(interval=yf_interval, period="max")
+        response = requests.get(url, params=params)
+        data = response.json()
         
-        if df.empty:
-            raise ValueError(f"Yahoo Finance returned no data for {symbol}")
-
-        # Clean up the Yahoo Finance table to match our Crypto table perfectly
-        df = df.reset_index()
-        time_col = 'Datetime' if 'Datetime' in df.columns else 'Date'
-        df.rename(columns={
-            time_col: 'timestamp',
-            'Open': 'open',
-            'High': 'high',
-            'Low': 'low',
-            'Close': 'close',
-            'Volume': 'volume'
-        }, inplace=True)
+        if not data or type(data) is dict: # API hit an error or ran out of data
+            print("⚠️ Binance API stopped returning data.")
+            break
+            
+        # Add the new batch of candles to the FRONT of our list
+        all_candles = data + all_candles 
         
-        df = df[['timestamp', 'open', 'high', 'low', 'close', 'volume']]
-        return df.tail(limit).reset_index(drop=True)
+        # Set the end_time for the next loop to 1 millisecond before our oldest candle
+        end_time = data[0][0] - 1 
+        time.sleep(0.1) # Be polite to the Binance servers so we don't get banned
+        
+    if not all_candles:
+        return pd.DataFrame()
+        
+    # Format the raw Binance data into our clean Matrix format
+    df = pd.DataFrame(all_candles, columns=[
+        'timestamp', 'open', 'high', 'low', 'close', 'volume',
+        'close_time', 'qav', 'num_trades', 'taker_base_vol', 'taker_quote_vol', 'ignore'
+    ])
+    
+    # Convert timestamps to actual dates
+    # Convert timestamps to actual dates, keep it as a column AND an index
+    df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+    df.set_index('timestamp', drop=False, inplace=True) # drop=False keeps the column!
+    
+    # Convert string prices to decimals
+    for col in ['open', 'high', 'low', 'close', 'volume']:
+        df[col] = df[col].astype(float)
+        
+    return df[['timestamp', 'open', 'high', 'low', 'close', 'volume']]

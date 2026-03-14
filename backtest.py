@@ -7,7 +7,7 @@ def run_backtest(symbol="BTC/USDT", timeframe="1h", limit=5000):
     
     # 1. Fetch data and run our core Matrix indicators
     # Note: If your fetch_data uses yfinance, use "BTC-USD". If Binance, "BTC/USDT".
-    df = fetch_data("BTC-USD", timeframe, limit) 
+    df = fetch_data(symbol, timeframe, limit)
     
     if df.empty:
         print("❌ Failed to fetch data.")
@@ -65,11 +65,11 @@ def run_backtest(symbol="BTC/USDT", timeframe="1h", limit=5000):
             # Update memory if we see a fresh signal
             if row.get('fvg_type') is not None and row.get('mitigated', False) == False:
                 recent_fvg = row['fvg_type']
-                fvg_timer = 3
+                fvg_timer = 30
                 
             if row.get('mss_type') is not None:
                 recent_mss = row['mss_type']
-                mss_timer = 3
+                mss_timer = 30
 
             # TRIGGER: If we have BOTH signals actively in memory
             if fvg_timer > 0 and mss_timer > 0:
@@ -104,7 +104,7 @@ def run_backtest(symbol="BTC/USDT", timeframe="1h", limit=5000):
     win_rate = (wins / total_trades * 100) if total_trades > 0 else 0
     
     print("="*40)
-    print(f"📊 BACKTEST RESULTS: BTC (Daily Chart)")
+    print(f"📊 BACKTEST RESULTS: {symbol} (4hr Chart)")
     print(f"Tested over ~{len(df)} candles")
     print("="*40)
     print(f"Total Trades Taken : {total_trades}")
@@ -114,5 +114,4 @@ def run_backtest(symbol="BTC/USDT", timeframe="1h", limit=5000):
     print("="*40)
 
 if __name__ == "__main__":
-    # Forcing a 5-year stress test on the Daily chart
-    run_backtest(symbol="BTC-USD", timeframe="1d", limit=2000)
+    run_backtest(symbol="SOLUSDT", timeframe="4h", limit=5000)
