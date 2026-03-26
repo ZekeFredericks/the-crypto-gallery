@@ -113,24 +113,48 @@ for liq in levels.get('lows', []):
 # ==========================================
 # ⚡ DRAW MARKET STRUCTURE SHIFTS (MSS)
 # ==========================================
+# We need timedelta to draw the line backward in time
+import pandas as pd 
+
 for index, row in df.dropna(subset=['mss_type']).iterrows():
+    y_anchor = row['mss_line'] 
+    
+    # Determine how far back to draw the line (roughly 5 candles)
+    # We use a simple time offset so it works on any timeframe
+    time_offset = pd.Timedelta(hours=20) if timeframe == '4h' else pd.Timedelta(hours=5)
+
     if row['mss_type'] == 'Bullish MSS':
         color = "lime"
-        y_anchor = row['low']
-        ay_offset = 30  # Arrow points up from below
-        text = "⬆ Bullish MSS"
+        y_shift = 10 # Pushes text slightly above the line
     else:
         color = "red"
-        y_anchor = row['high']
-        ay_offset = -30 # Arrow points down from above
-        text = "⬇ Bearish MSS"
+        y_shift = -10 # Pushes text slightly below the line
         
-    fig.add_annotation(
-        x=row['timestamp'], y=y_anchor,
-        text=text, 
-        showarrow=True, arrowhead=2, arrowsize=1, arrowwidth=2, arrowcolor=color,
-        font=dict(color=color, size=10), # <--- Removed the bad borderpad property
-        ax=0, ay=ay_offset
+    # 1. Draw the horizontal structural line
+    fig.add_shape(
+        type="line",
+        x0=row['timestamp'] - time_offset, y0=y_anchor,
+        x1=row['timestamp'], y1=y_anchor,
+        line=dict(color=color, width=2, dash="dot"),
+        layer="below"
     )
+
+    # 2. Add the text label without the bulky arrow
+    fig.add_annotation(
+        x=row['timestamp'], y=y_anchor,  
+        text=row['mss_type'], 
+        showarrow=False, # <-- Arrows are gone!
+        font=dict(color=color, size=11, family="Arial Black"),
+        yshift=y_shift
+    )
+
+# ==========================================
+# 📐 CHART SIZING & LAYOUT
+# ==========================================
+fig.update_layout(
+    height=800,  # This forces the chart to be 800 pixels tall
+    margin=dict(l=20, r=20, t=20, b=20), # Gives it a little breathing room
+    xaxis_rangeslider_visible=False # Turns off the annoying mini-map at the bottom
+)
 
 st.plotly_chart(fig, use_container_width=True)

@@ -65,6 +65,7 @@ def detect_mss(df, window=5):
     Only flags a shift when the trend actually reverses, ignoring continuous breakouts.
     """
     df['mss_type'] = None
+    df['mss_line'] = None  # <--- NEW: Create a column to remember the broken line
     current_trend = None  # The memory of the bot
     
     for i in range(window, len(df)):
@@ -76,6 +77,7 @@ def detect_mss(df, window=5):
             # ONLY flag it if the trend wasn't already Bullish
             if current_trend != 'Bullish':
                 df.at[df.index[i], 'mss_type'] = 'Bullish MSS'
+                df.at[df.index[i], 'mss_line'] = prev_high  # <--- NEW: Save the ceiling price
                 current_trend = 'Bullish'  # Update the memory
                 
         # 2. Check for Bearish Break
@@ -83,6 +85,7 @@ def detect_mss(df, window=5):
             # ONLY flag it if the trend wasn't already Bearish
             if current_trend != 'Bearish':
                 df.at[df.index[i], 'mss_type'] = 'Bearish MSS'
+                df.at[df.index[i], 'mss_line'] = prev_low  # <--- NEW: Save the floor price
                 current_trend = 'Bearish'  # Update the memory
 
     return df

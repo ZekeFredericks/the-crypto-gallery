@@ -24,9 +24,11 @@ def run_matrix_scan(symbols, timeframe='4h'):
             # 1. Fetch data and run BOTH indicators
             df = fetch_data(symbol, timeframe, limit=100)
             df = detect_fvg(df)
-            df = detect_mss(df)  # 👈 WE ADDED THIS LINE
+            df = detect_mss(df) 
             
-            latest_candles = df.tail(3)
+            # Drop the active, unfinished forming candle (-1), 
+            # and look only at the 3 most recently CLOSED candles
+            latest_candles = df.iloc[-4:-1]
             
             # Track both signals temporarily
             recent_fvg = None
@@ -105,6 +107,41 @@ def run_scanner():
             print(f"Error scanning {symbol}: {e}")
 
 # ==========================================
+# ==========================================
+# 🕒 THE GLOBAL DAEMON (Cloud Server Loop)
+# ==========================================
 if __name__ == "__main__":
-    # This only runs if you type `python3 src/scanner.py`
-    run_scanner()
+    from datetime import datetime, timedelta, timezone
+
+    def get_sleep_time(timeframe_hours=4):
+        """Calculates exact seconds until the next 4H exchange candle closes."""
+        now = datetime.now(timezone.utc)
+        
+        # Target the next 4-hour block (00:00, 04:00, 08:00, 12:00, 16:00, 20:00)
+        next_hour = ((now.hour // timeframe_hours) + 1) * timeframe_hours
+        
+        if next_hour >= 24:
+            next_time = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+        else:
+            next_time = now.replace(hour=next_hour, minute=0, second=0, microsecond=0)
+        
+        # ADD A 15-SECOND BUFFER (Lets Binance finalize the candle data)
+        next_time = next_time + timedelta(seconds=15)
+        
+        return (next_time - now).total_seconds()
+
+    print("Matrix Engine [V2] initialized. Synced to Global Exchange Clock...")
+    
+    while True:
+        # 1. Calculate the exact math to the next 4-hour candle close
+        seconds_to_sleep = get_sleep_time(timeframe_hours=4)
+        next_wake = datetime.now() + timedelta(seconds=seconds_to_sleep)
+        
+        print(f"Engine sleeping. Next global scan scheduled for: {next_wake.strftime('%Y-%m-%d %H:%M:%S')}")
+        
+        # 2. Put the server to sleep
+        time.sleep(seconds_to_sleep)
+        
+        # 3. WAKE UP and run the REAL Matrix Scan (which includes Discord alerts)
+        print("Waking up! Executing Matrix Scan...")
+        run_matrix_scan(SYMBOLS, timeframe='4h')
